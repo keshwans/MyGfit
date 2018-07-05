@@ -88,9 +88,28 @@ public class MainActivity extends AppCompatActivity {
                     GoogleSignIn.getLastSignedInAccount(this),
                     fitnessOptions);
         } else {
+            startRecording();
             updateDashboard();
 
         }
+    }
+
+    private void startRecording(){
+        // To create a subscription, invoke the Recording API. As soon as the subscription is
+        // active, fitness data will start recording.
+        Fitness.getRecordingClient(this, GoogleSignIn.getLastSignedInAccount(this))
+                .subscribe(DataType.TYPE_STEP_COUNT_CUMULATIVE)
+                .addOnCompleteListener(
+                        new OnCompleteListener<Void>() {
+                            @Override
+                            public void onComplete(@NonNull Task<Void> task) {
+                                if (task.isSuccessful()) {
+                                    Log.i(LOG_TAG, "Successfully subscribed!");
+                                } else {
+                                    Log.w(LOG_TAG, "There was a problem subscribing.", task.getException());
+                                }
+                            }
+                        });
     }
 
     private void updateDashboard() {
@@ -126,6 +145,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (resultCode == Activity.RESULT_OK) {
             if (requestCode == GOOGLE_FIT_PERMISSIONS_REQUEST_CODE) {
+                startRecording();
                 updateDashboard();
             }
         }
