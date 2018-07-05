@@ -12,6 +12,7 @@ import android.util.Log;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.widget.Button;
 import android.widget.TextView;
 
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
@@ -41,6 +42,7 @@ public class MainActivity extends AppCompatActivity {
 
     private TextView mStepsToday;
     private TextView mStepsWeekly;
+    private Button mRefresh;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,6 +53,14 @@ public class MainActivity extends AppCompatActivity {
 
         mStepsToday = findViewById(R.id.steps_today);
         mStepsWeekly = findViewById(R.id.steps_week);
+        mRefresh = findViewById(R.id.refresh);
+        mRefresh.setEnabled(false);
+        mRefresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                updateDashboard();
+            }
+        });
 
         FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(new View.OnClickListener() {
@@ -64,10 +74,11 @@ public class MainActivity extends AppCompatActivity {
         initializeGoogleFit();
     }
 
+
     private void initializeGoogleFit() {
         FitnessOptions fitnessOptions = FitnessOptions.builder()
-                .addDataType(DataType.TYPE_STEP_COUNT_DELTA, FitnessOptions.ACCESS_READ)
-                .addDataType(DataType.AGGREGATE_STEP_COUNT_DELTA, FitnessOptions.ACCESS_READ)
+                .addDataType(DataType.TYPE_STEP_COUNT_DELTA)
+                .addDataType(DataType.AGGREGATE_STEP_COUNT_DELTA)
                 .build();
 
         if (!GoogleSignIn.hasPermissions(GoogleSignIn.getLastSignedInAccount(this), fitnessOptions)) {
@@ -77,9 +88,16 @@ public class MainActivity extends AppCompatActivity {
                     GoogleSignIn.getLastSignedInAccount(this),
                     fitnessOptions);
         } else {
-            readStepsCountForToday();
-            readStepsCountForWeek();
+            updateDashboard();
+
         }
+    }
+
+    private void updateDashboard() {
+        readStepsCountForToday();
+        readStepsCountForWeek();
+        mRefresh.setEnabled(true);
+
     }
 
     @Override
@@ -108,8 +126,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (resultCode == Activity.RESULT_OK) {
             if (requestCode == GOOGLE_FIT_PERMISSIONS_REQUEST_CODE) {
-                readStepsCountForToday();
-                readStepsCountForWeek();
+                updateDashboard();
             }
         }
     }
