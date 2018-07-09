@@ -21,9 +21,14 @@ import com.google.android.gms.fitness.FitnessOptions;
 import com.google.android.gms.fitness.data.Bucket;
 import com.google.android.gms.fitness.data.DataPoint;
 import com.google.android.gms.fitness.data.DataSet;
+import com.google.android.gms.fitness.data.DataSource;
 import com.google.android.gms.fitness.data.DataType;
 import com.google.android.gms.fitness.data.Field;
+import com.google.android.gms.fitness.data.Value;
 import com.google.android.gms.fitness.request.DataReadRequest;
+import com.google.android.gms.fitness.request.DataSourcesRequest;
+import com.google.android.gms.fitness.request.OnDataPointListener;
+import com.google.android.gms.fitness.request.SensorRequest;
 import com.google.android.gms.fitness.result.DataReadResponse;
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.OnFailureListener;
@@ -38,11 +43,14 @@ import java.util.concurrent.TimeUnit;
 public class MainActivity extends AppCompatActivity {
 
     private static final int GOOGLE_FIT_PERMISSIONS_REQUEST_CODE = 1001;
-    private static final String LOG_TAG = MainActivity.class.getSimpleName();
+    private static final String TAG = MainActivity.class.getSimpleName();
 
+    private int mSensorsStepCount = 0;
+    private TextView mStepsSensor;
     private TextView mStepsToday;
     private TextView mStepsWeekly;
     private Button mRefresh;
+    private OnDataPointListener mListener;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,6 +59,10 @@ public class MainActivity extends AppCompatActivity {
         Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
 
+        if (savedInstanceState != null) {
+            mSensorsStepCount = savedInstanceState.getInt("sensor_steps");
+        }
+        mStepsSensor = findViewById(R.id.steps_sensor);
         mStepsToday = findViewById(R.id.steps_today);
         mStepsWeekly = findViewById(R.id.steps_week);
         mRefresh = findViewById(R.id.refresh);
@@ -71,14 +83,16 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        initializeGoogleFit();
     }
 
 
     private void initializeGoogleFit() {
         FitnessOptions fitnessOptions = FitnessOptions.builder()
                 .addDataType(DataType.TYPE_STEP_COUNT_DELTA)
+                .addDataType(DataType.TYPE_STEP_COUNT_CUMULATIVE)
                 .addDataType(DataType.AGGREGATE_STEP_COUNT_DELTA)
+                .addDataType(DataType.TYPE_LOCATION_SAMPLE)
+                .addDataType(DataType.TYPE_ACTIVITY_SAMPLES)
                 .build();
 
         if (!GoogleSignIn.hasPermissions(GoogleSignIn.getLastSignedInAccount(this), fitnessOptions)) {
@@ -88,35 +102,11 @@ public class MainActivity extends AppCompatActivity {
                     GoogleSignIn.getLastSignedInAccount(this),
                     fitnessOptions);
         } else {
+            findFitnessDataSources();
             startRecording();
             updateDashboard();
 
         }
-    }
-
-    private void startRecording(){
-        // To create a subscription, invoke the Recording API. As soon as the subscription is
-        // active, fitness data will start recording.
-        Fitness.getRecordingClient(this, GoogleSignIn.getLastSignedInAccount(this))
-                .subscribe(DataType.TYPE_STEP_COUNT_CUMULATIVE)
-                .addOnCompleteListener(
-                        new OnCompleteListener<Void>() {
-                            @Override
-                            public void onComplete(@NonNull Task<Void> task) {
-                                if (task.isSuccessful()) {
-                                    Log.i(LOG_TAG, "Successfully subscribed!");
-                                } else {
-                                    Log.w(LOG_TAG, "There was a problem subscribing.", task.getException());
-                                }
-                            }
-                        });
-    }
-
-    private void updateDashboard() {
-        readStepsCountForToday();
-        readStepsCountForWeek();
-        mRefresh.setEnabled(true);
-
     }
 
     @Override
@@ -145,10 +135,169 @@ public class MainActivity extends AppCompatActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (resultCode == Activity.RESULT_OK) {
             if (requestCode == GOOGLE_FIT_PERMISSIONS_REQUEST_CODE) {
+                findFitnessDataSources();
                 startRecording();
                 updateDashboard();
             }
         }
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        initializeGoogleFit();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        unregisterFitnessDataListener();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putInt("sensor_steps", mSensorsStepCount);
+    }
+
+    private void startRecording() {
+        // To create a subscription, invoke the Recording API. As soon as the subscription is
+        // active, fitness data will start recording.
+        Fitness.getRecordingClient(this, GoogleSignIn.getLastSignedInAccount(this))
+                .subscribe(DataType.TYPE_STEP_COUNT_CUMULATIVE)
+                .addOnCompleteListener(
+                        new OnCompleteListener<Void>() {
+                            @Override
+                            public void onComplete(@NonNull Task<Void> task) {
+                                if (task.isSuccessful()) {
+                                    Log.i(TAG, "Successfully subscribed!");
+                                } else {
+                                    Log.w(TAG, "There was a problem subscribing.", task.getException());
+                                }
+                            }
+                        });
+
+
+    }
+
+    private void updateDashboard() {
+        mRefresh.setEnabled(false);
+        readStepsCountForToday();
+        readStepsCountForWeek();
+        mStepsSensor.setText("Sensor: " + mSensorsStepCount);
+
+        mRefresh.setEnabled(true);
+
+    }
+
+    /**
+     * Finds available data sources and attempts to register on a specific {@link DataType}.
+     */
+    private void findFitnessDataSources() {
+        // [START find_data_sources]
+        // Note: Fitness.SensorsApi.findDataSources() requires the ACCESS_FINE_LOCATION permission.
+        Fitness.getSensorsClient(this, GoogleSignIn.getLastSignedInAccount(this))
+                .findDataSources(
+                        new DataSourcesRequest.Builder()
+                                .setDataTypes(DataType.TYPE_STEP_COUNT_DELTA)
+                                .setDataSourceTypes(DataSource.TYPE_RAW)
+                                .build())
+                .addOnSuccessListener(
+                        new OnSuccessListener<List<DataSource>>() {
+                            @Override
+                            public void onSuccess(List<DataSource> dataSources) {
+                                for (DataSource dataSource : dataSources) {
+                                    Log.i(TAG, "Data source found: " + dataSource.toString());
+                                    Log.i(TAG, "Data Source type: " + dataSource.getDataType().getName());
+
+                                    // Let's register a listener to receive Activity data!
+                                    if (dataSource.getDataType().equals(DataType.TYPE_STEP_COUNT_DELTA)
+                                            && mListener == null) {
+                                        Log.i(TAG, "Data source for TYPE_STEP_COUNT_DELTA found!  Registering.");
+                                        registerFitnessDataListener(dataSource, DataType.TYPE_STEP_COUNT_DELTA);
+                                    }
+                                }
+                            }
+                        })
+                .addOnFailureListener(
+                        new OnFailureListener() {
+                            @Override
+                            public void onFailure(@NonNull Exception e) {
+                                Log.e(TAG, "failed", e);
+                            }
+                        });
+    }
+
+    /**
+     * Registers a listener with the Sensors API for the provided {@link DataSource} and {@link
+     * DataType} combo.
+     */
+    private void registerFitnessDataListener(DataSource dataSource, DataType dataType) {
+        mListener =
+                new OnDataPointListener() {
+                    @Override
+                    public void onDataPoint(DataPoint dataPoint) {
+                        for (Field field : dataPoint.getDataType().getFields()) {
+                            Value val = dataPoint.getValue(field);
+                            Log.i(TAG, "Detected DataPoint field: " + field.getName());
+                            Log.i(TAG, "Detected DataPoint value: " + val);
+
+                            mSensorsStepCount += val.asInt();
+                        }
+                    }
+                };
+
+        Fitness.getSensorsClient(this, GoogleSignIn.getLastSignedInAccount(this))
+                .add(
+                        new SensorRequest.Builder()
+//                                .setDataSource(dataSource) // Optional but recommended for custom data sets.
+                                .setDataType(dataType) // Can't be omitted.
+                                .setSamplingRate(1, TimeUnit.SECONDS)
+                                .build(),
+                        mListener)
+                .addOnCompleteListener(
+                        new OnCompleteListener<Void>() {
+                            @Override
+                            public void onComplete(@NonNull Task<Void> task) {
+                                if (task.isSuccessful()) {
+                                    Log.i(TAG, "Listener registered!");
+                                } else {
+                                    Log.e(TAG, "Listener not registered.", task.getException());
+                                }
+                            }
+                        });
+        // [END register_data_listener]
+    }
+
+    /**
+     * Unregisters the listener with the Sensors API.
+     */
+    private void unregisterFitnessDataListener() {
+        if (mListener == null) {
+            // This code only activates one listener at a time.  If there's no listener, there's
+            // nothing to unregister.
+            return;
+        }
+
+        // [START unregister_data_listener]
+        // Waiting isn't actually necessary as the unregister call will complete regardless,
+        // even if called from within onStop, but a callback can still be added in order to
+        // inspect the results.
+        Fitness.getSensorsClient(this, GoogleSignIn.getLastSignedInAccount(this))
+                .remove(mListener)
+                .addOnCompleteListener(
+                        new OnCompleteListener<Boolean>() {
+                            @Override
+                            public void onComplete(@NonNull Task<Boolean> task) {
+                                if (task.isSuccessful() && task.getResult()) {
+                                    Log.i(TAG, "Listener was removed!");
+                                } else {
+                                    Log.i(TAG, "Listener was not removed.");
+                                }
+                                mListener = null;
+                            }
+                        });
+        // [END unregister_data_listener]
     }
 
     private void readStepsCountForToday() {
@@ -176,7 +325,7 @@ public class MainActivity extends AppCompatActivity {
                 .addOnSuccessListener(new OnSuccessListener() {
                     @Override
                     public void onSuccess(Object o) {
-                        Log.d(LOG_TAG, "onSuccess()");
+                        Log.d(TAG, "onSuccess()");
                         if (o instanceof DataReadRequest) {
                             DataReadResponse dataReadResponse = (DataReadResponse) o;
                             DataSet stepData = dataReadResponse.getDataSet(DataType.TYPE_STEP_COUNT_DELTA);
@@ -195,19 +344,19 @@ public class MainActivity extends AppCompatActivity {
                     }
 
                     public void onSuccess(DataReadResponse dataReadResponse) {
-                        Log.d(LOG_TAG, "onSuccess()");
+                        Log.d(TAG, "onSuccess()");
                     }
                 })
                 .addOnFailureListener(new OnFailureListener() {
                     @Override
                     public void onFailure(@NonNull Exception e) {
-                        Log.e(LOG_TAG, "onFailure()", e);
+                        Log.e(TAG, "onFailure()", e);
                     }
                 })
                 .addOnCompleteListener(new OnCompleteListener() {
                     @Override
                     public void onComplete(@NonNull Task task) {
-                        Log.d(LOG_TAG, "onComplete()");
+                        Log.d(TAG, "onComplete()");
 
                         DataReadResponse dataReadResponse = (DataReadResponse) task.getResult();
                         DataSet stepData = dataReadResponse.getDataSet(DataType.TYPE_STEP_COUNT_DELTA);
@@ -220,7 +369,7 @@ public class MainActivity extends AppCompatActivity {
                                 totalSteps += steps;
                             }
                         }
-                        Log.i(LOG_TAG, "total steps for this week: " + totalSteps);
+                        Log.i(TAG, "total steps for this week: " + totalSteps);
                         mStepsToday.setText("Total Steps today:" + totalSteps);
                     }
                 });
@@ -247,7 +396,7 @@ public class MainActivity extends AppCompatActivity {
                 .addOnSuccessListener(new OnSuccessListener() {
                     @Override
                     public void onSuccess(Object o) {
-                        Log.d(LOG_TAG, "onSuccess()");
+                        Log.d(TAG, "onSuccess()");
                         if (o instanceof DataReadRequest) {
                             DataReadResponse dataReadResponse = (DataReadResponse) o;
                             DataSet stepData = dataReadResponse.getDataSet(DataType.AGGREGATE_STEP_COUNT_DELTA);
@@ -264,19 +413,19 @@ public class MainActivity extends AppCompatActivity {
                     }
 
                     public void onSuccess(DataReadResponse dataReadResponse) {
-                        Log.d(LOG_TAG, "onSuccess()");
+                        Log.d(TAG, "onSuccess()");
                     }
                 })
                 .addOnFailureListener(new OnFailureListener() {
                     @Override
                     public void onFailure(@NonNull Exception e) {
-                        Log.e(LOG_TAG, "onFailure()", e);
+                        Log.e(TAG, "onFailure()", e);
                     }
                 })
                 .addOnCompleteListener(new OnCompleteListener() {
                     @Override
                     public void onComplete(@NonNull Task task) {
-                        Log.d(LOG_TAG, "onComplete()");
+                        Log.d(TAG, "onComplete()");
 
                         DataReadResponse dataReadResponse = (DataReadResponse) task.getResult();
                         DataSet stepData = dataReadResponse.getDataSet(DataType.AGGREGATE_STEP_COUNT_DELTA);
@@ -289,7 +438,7 @@ public class MainActivity extends AppCompatActivity {
                                 totalSteps += steps;
                             }
                         }
-                        Log.i(LOG_TAG, "total steps for this week: " + totalSteps);
+                        Log.i(TAG, "total steps for this week: " + totalSteps);
                         mStepsWeekly.setText("Total steps for week: " + totalSteps);
                     }
                 });
@@ -333,7 +482,7 @@ public class MainActivity extends AppCompatActivity {
                             }
 //                            }
                         }
-                        Log.i(LOG_TAG, "total steps for this week: " + totalSteps);
+                        Log.i(TAG, "total steps for this week: " + totalSteps);
                         mStepsWeekly.setText("Total steps for week: " + totalSteps);
                     }
                 })
@@ -361,7 +510,7 @@ public class MainActivity extends AppCompatActivity {
                             }
 //                            }
                         }
-                        Log.i(LOG_TAG, "total steps for this week: " + totalSteps);
+                        Log.i(TAG, "total steps for this week: " + totalSteps);
                         mStepsWeekly.setText("Total steps for week: " + totalSteps);
                     }
                 });
